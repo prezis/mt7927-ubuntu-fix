@@ -1,0 +1,10 @@
+[Unit]
+Description=Reset MT7927 WiFi chip after resume or boot
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mt7927-resume-fix.sh
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target multi-user.target
