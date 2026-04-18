@@ -75,7 +75,57 @@ python3 dkms/mediatek-mt7927-2.7/extract_firmware.py <driver.zip or mtkwlan.dat>
 
 - After suspend/resume the chip may hang (`CHIPID=0xffff`, `MCU idle timeout`, error -110). The resume fix service handles this automatically.
 - `mac_reset not supported` messages in dmesg are normal — the driver falls back to PCI reset.
-- Bluetooth firmware (`BT_RAM_CODE_MT6639_2_1_hdr.bin`) is not included yet.
+- **Bluetooth is UNRESOLVED** — see section below.
+
+## Bluetooth (unresolved)
+
+The MT7927 is a combo chip: WiFi on PCIe, Bluetooth on USB. This repo only fixes the PCIe/WiFi half. The Bluetooth USB interface **does not reliably enumerate** on Linux as of kernel 6.17.0-20-generic.
+
+### Symptoms
+
+- `lsusb -t` shows **no** MediaTek device (VIDs `0e8d`, `0489`, or `13d3` all absent)
+- `btusb` module loads but has `0` consumers (nothing binds)
+- `rfkill list` shows only WiFi (`phy1`); no `hci0`
+- `/sys/class/bluetooth/` is empty
+- `bluetoothctl show` returns "No default controller available"
+- WiFi works fine via PCIe the whole time
+
+### Partial workaround (unreliable)
+
+A **full AC cold power-cycle** (not `reboot` — actual `poweroff`, wait 20+ seconds, power back on) sometimes makes the BT USB interface enumerate. After that, `btusb` + in-tree `btmtk` bind and BT works. **But it stops working again after the next soft reboot / suspend / kernel event**, and the next cold cycle may or may not bring it back.
+
+### Why this is hard
+
+1. **`btmtk` driver has no MT7927 alias.** `modinfo btmtk` lists BT firmware for MT7925/7961/7922/7668/7663/7622 — no 7927 entry. btmtk only tries to bind if btusb successfully claims a USB interface first.
+2. **No `BT_RAM_CODE_MT7927_*` firmware exists** in `linux-firmware` upstream or the MediaTek driver ZIP. The chip may be compatible with MT7925 BT firmware (the `/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin` file is present and loadable) — but we can't know without enumeration.
+3. **The USB endpoint is gated by the chip's own power state machine.** WiFi coming up via PCIe does not wake the BT USB logic. After a Linux-initiated reboot (vs. full AC cycle), BT stays in a stuck reset state. This matches known MT792x-family behavior on other boards (e.g. reports on linux-mediatek-dev mailing list for MT7922).
+4. **Our DKMS patches only touch mt76/mt7925e (WiFi).** They do not expose any hook to power-cycle the USB/BT rail. Adding a BT init sequence likely requires either:
+   - a vendor-provided MT7927 BT initializer (not public), or
+   - a kernel patch that adds MT7927 USB IDs to btusb and a chip-reset quirk.
+
+### What to try (if you want to help debug)
+
+```bash
+# 1. Confirm your BT USB side never appears, even on cold boot:
+watch -n 1 'lsusb | grep -iE "mediatek|0e8d|0489|13d3"'
+# Then cold-cycle the PSU.
+
+# 2. Check if ASUS BIOS has a separate BT toggle:
+# Advanced → Onboard Devices Configuration → Bluetooth Controller
+# Or: Advanced → AMD CBS → FCH USB Options
+
+# 3. After a cold boot where BT DOES enumerate, capture:
+sudo dmesg | grep -iE 'bluetooth|btusb|btmtk|usb.*new' > /tmp/bt-working.log
+lsusb -v -d 0e8d: 2>/dev/null > /tmp/bt-working-lsusb.log  # or vendor that appears
+
+# 4. After BT stops, before rebooting, capture the "dead" state:
+sudo dmesg | grep -iE 'bluetooth|btusb|btmtk|usb' > /tmp/bt-dead.log
+lsusb -t > /tmp/bt-dead-tree.log
+
+# Attach all 4 files to issue #1 for upstream debugging.
+```
+
+Contributions (especially kernel patches or reverse-engineered BT init sequences) welcome — open an issue or PR.
 
 ## How it works
 
