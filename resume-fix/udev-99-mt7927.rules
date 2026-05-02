@@ -1,0 +1,7 @@
+# /etc/udev/rules.d/99-mt7927.rules
+# Belt-and-suspenders for the modprobe.d fix: tell udev to assign mt7925e
+# as the driver for any PCI device with vendor 14c3 device 7927, regardless
+# of what driver the kernel auto-matched.
+#
+# Source: github.com/reynold-lariza/CachyOS-ASUS-Pro-Art-X870E-WIFI-and-Bluetooth-fix
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x14c3", ATTR{device}=="0x7927", ATTR{driver_override}="mt7925e"
