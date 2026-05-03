@@ -96,6 +96,42 @@ ls /sys/class/bluetooth/              # hci0 directory exists
 bluetoothctl show                     # Powered: yes
 ```
 
+## Recovery from a stuck BT state (deterministic)
+
+If `lsusb` shows no MediaTek device, `/sys/class/bluetooth/` is empty, or you see `Bluetooth: hci0: wmt command timed out` in dmesg, **the chip is stuck in a hardware reset state** and no `modprobe`/`rmmod`/`systemctl restart bluetooth` will recover it. The `+5VSB` rail kept MT6639 hung across the last warm reboot.
+
+**Procedure (verified working 2026-05-03 on kernel 6.17.0-23):**
+
+```bash
+sudo shutdown -h now    # NOT `reboot` — must hit S5 to engage ErP power cut
+# Wait for the motherboard standby LED to go OFF (≈5–10 s after fans stop).
+# If it stays on: flip the PSU rocker switch for 5 s, then back on.
+# Cold boot.
+```
+
+Expected dmesg signature on a healthy cold boot (kernel time `t≈3–25 s`):
+
+```
+[    1.6] usb 1-6: New USB device found, idVendor=0489, idProduct=e13a
+[    1.6] usb 1-6: Manufacturer: MediaTek Inc.
+[    3.6] Bluetooth: Core ver 2.22
+[    3.7] usbcore: registered new interface driver btusb
+[    3.7] Bluetooth: hci0: HW/SW Version: 0x00000000, Build Time: <date>
+[   23.5] Bluetooth: hci0: Device setup in 19326925 usecs
+[   23.6] Bluetooth: hci0: AOSP extensions version v1.00
+```
+
+The `~19 s` device setup time is normal for MT6639 firmware load + AOSP negotiation. The two harmless warnings (`setting interface failed (22)`, `ISO intf not support (-19)`) appear on every successful boot — they reflect ALT/ISO USB endpoints that MT6639 advertises but does not implement, not failures.
+
+**What does NOT work as a workaround:**
+
+* Warm `reboot` — leaves +5VSB rail live, chip stays hung
+* `modprobe -r btusb && modprobe btusb` — useless when device is not on the USB bus
+* `echo 0 > /sys/bus/usb/devices/.../authorized` cycles — chip is below USB enumeration
+* Suspend → resume — re-engages the same stuck state
+
+If a cold-power-cut shutdown does not recover the chip, file an issue with the dead-state captures (`dmesg`, `lsusb -t`, `journalctl -u bluetooth`) — that means a deeper firmware issue, not the +5VSB lock.
+
 ## Known issues / open questions
 
 * **Suspend/resume is still flaky for WiFi**, hence the resume-fix service. The script v2 covers the boot-time path; suspend/resume should also work but report failures on issue tracker if you see them.
